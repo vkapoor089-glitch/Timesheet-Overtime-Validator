@@ -22,27 +22,29 @@ if uploaded_zip is not None:
         with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
             for file_path in zip_ref.namelist():
                 
-                # Target ONLY the "Manage Attendance Report" files
-                if 'Manage Attendance Report' in file_path and file_path.endswith('.xlsx') and '__MACOSX' not in file_path:
+                # 1. Process all Excel files, but completely skip system files and Individual Registrations
+                if file_path.endswith('.xlsx') and '__MACOSX' not in file_path and 'Individual Registration' not in file_path:
                     
-                    # Extract Employee Name from the folder path 
+                    # Determine default employee name from folder path if needed
                     path_parts = file_path.split('/')
-                    if len(path_parts) >= 2:
-                        emp_name = path_parts[-2]
-                    else:
-                        emp_name = "Unknown Employee"
+                    folder_emp_name = path_parts[-2] if len(path_parts) >= 2 else "Unknown Employee"
 
                     # Open and parse the Excel file using the calamine engine
                     with zip_ref.open(file_path) as file:
                         df = pd.read_excel(file, engine='calamine')
                         
+                        # Clean column whitespace
                         df.columns = df.columns.str.strip()
                         
-                        if 'Date' in df.columns and 'Hours' in df.columns:
-                            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+                        # 2. Dynamically identify Date and Hours columns
+                        date_col = next((col for col in df.columns if 'Date' in col), None)
+                        hours_col = 'Hours' if 'Hours' in df.columns else None
+                        
+                        if date_col and hours_col:
+                            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
                             
                             # Filter for Weekends (Sat=5, Sun=6)
-                            weekend_work = df[df['Date'].dt.dayofweek >= 5].copy()
+                            weekend_work = df[df[date_col].dt.dayofweek >= 5].copy()
                             
                             def parse_hours(time_str):
                                 try:
@@ -54,20 +56,27 @@ if uploaded_zip is not None:
                                 except:
                                     return 0.0
 
-                            weekend_work['Decimal_Hours'] = weekend_work['Hours'].apply(parse_hours)
+                            weekend_work['Decimal_Hours'] = weekend_work[hours_col].apply(parse_hours)
                             weekend_work = weekend_work[weekend_work['Decimal_Hours'] > 0]
                             
                             if not weekend_work.empty:
-                                if emp_name not in overtime_records:
-                                    overtime_records[emp_name] = {
-                                        "Total_Hours": 0.0,
-                                        "Breakdown": []
-                                    }
-                                
                                 for _, row in weekend_work.iterrows():
-                                    date_str = row['Date'].strftime('%d/%b/%Y')
-                                    hrs_str = str(row['Hours']).strip()
+                                    
+                                    # 3. Dynamic Name Check: From row column if present, else from folder name
+                                    if 'Name' in df.columns:
+                                        emp_name = str(row['Name']).strip()
+                                    else:
+                                        emp_name = folder_emp_name
+                                        
+                                    date_str = row[date_col].strftime('%d/%b/%Y')
+                                    hrs_str = str(row[hours_col]).strip()
                                     decimal_hrs = row['Decimal_Hours']
+                                    
+                                    if emp_name not in overtime_records:
+                                        overtime_records[emp_name] = {
+                                            "Total_Hours": 0.0,
+                                            "Breakdown": []
+                                        }
                                     
                                     overtime_records[emp_name]["Total_Hours"] += decimal_hrs
                                     overtime_records[emp_name]["Breakdown"].append({
@@ -119,36 +128,34 @@ if uploaded_zip is not None:
                 
                 table_rows_html = ""
                 
-                # Loop through every selected employee and build rows + individual subtotals
+                # Loop through selected employees and build individual subtotals
                 for emp in active_emps:
-                    active_data = overtime_records[emp]
-                    emp_decimal_hours = active_data["Total_Hours"]
-                    
-                    # 1. Add their specific daily rows
-                    for entry in active_data["Breakdown"]:
+                    if emp in overtime_records:
+                        active_data = overtime_records[emp]
+                        emp_decimal_hours = active_data["Total_Hours"]
+                        
+                        for entry in active_data["Breakdown"]:
+                            table_rows_html += f"""
+                            <tr>
+                                <td style="border: 1px solid #dddddd; padding: 8px;">{emp}</td>
+                                <td style="border: 1px solid #dddddd; padding: 8px;">{entry['Date']}</td>
+                                <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{entry['Hours']}</td>
+                            </tr>
+                            """
+                        
+                        emp_h = int(emp_decimal_hours)
+                        emp_m = int(round((emp_decimal_hours - emp_h) * 60))
+                        if emp_m == 60:
+                            emp_h += 1
+                            emp_m = 0
+                        formatted_emp_total = f"{emp_h:02d}:{emp_m:02d}"
+                        
                         table_rows_html += f"""
-                        <tr>
-                            <td style="border: 1px solid #dddddd; padding: 8px;">{emp}</td>
-                            <td style="border: 1px solid #dddddd; padding: 8px;">{entry['Date']}</td>
-                            <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{entry['Hours']}</td>
+                        <tr style="background-color: #f9f9f9; font-weight: bold;">
+                            <td colspan="2" style="border: 1px solid #dddddd; padding: 8px; text-align: right;">Total for {emp}:</td>
+                            <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{formatted_emp_total}</td>
                         </tr>
                         """
-                    
-                    # 2. Convert THIS employee's total back to HH:MM format
-                    emp_h = int(emp_decimal_hours)
-                    emp_m = int(round((emp_decimal_hours - emp_h) * 60))
-                    if emp_m == 60:
-                        emp_h += 1
-                        emp_m = 0
-                    formatted_emp_total = f"{emp_h:02d}:{emp_m:02d}"
-                    
-                    # 3. Add the subtotal row for this employee
-                    table_rows_html += f"""
-                    <tr style="background-color: #f9f9f9; font-weight: bold;">
-                        <td colspan="2" style="border: 1px solid #dddddd; padding: 8px; text-align: right;">Total for {emp}:</td>
-                        <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{formatted_emp_total}</td>
-                    </tr>
-                    """
                 
                 email_html = f"""
                 <div style="font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #333333;">
