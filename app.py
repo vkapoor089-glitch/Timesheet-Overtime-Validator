@@ -32,11 +32,10 @@ if uploaded_zip is not None:
                     else:
                         emp_name = "Unknown Employee"
 
-                    # Open and parse the Excel file using the new 'calamine' engine
+                    # Open and parse the Excel file using the calamine engine
                     with zip_ref.open(file_path) as file:
                         df = pd.read_excel(file, engine='calamine')
                         
-                        # Clean column headers
                         df.columns = df.columns.str.strip()
                         
                         if 'Date' in df.columns and 'Hours' in df.columns:
@@ -55,7 +54,6 @@ if uploaded_zip is not None:
                                 except:
                                     return 0.0
 
-                            # Apply hour conversion and filter out 00:00 days
                             weekend_work['Decimal_Hours'] = weekend_work['Hours'].apply(parse_hours)
                             weekend_work = weekend_work[weekend_work['Decimal_Hours'] > 0]
                             
@@ -92,46 +90,74 @@ if uploaded_zip is not None:
             
             with left_pane:
                 st.subheader("📋 Overtime Summary")
-                st.write("Click an employee to generate their draft:")
+                st.write("Select one or more employees below to generate a consolidated draft:")
                 
+                # CHANGED to multi-row selection
                 selected_rows = st.dataframe(
                     df_results, 
                     use_container_width=True,
                     hide_index=True,
                     on_select="rerun",
-                    selection_mode="single-row"
+                    selection_mode="multi-row" 
                 )
                 
-                selected_row_idx = 0
+                # Default to the first row if nothing is checked
+                selected_indices = [0]
                 if selected_rows and selected_rows.get("selection", {}).get("rows"):
-                    selected_row_idx = selected_rows["selection"]["rows"][0]
+                    selected_indices = selected_rows["selection"]["rows"]
                 
-                active_emp = summary_data[selected_row_idx]["Employee"]
-                active_data = overtime_records[active_emp]
+                # Gather all selected employees
+                active_emps = [summary_data[idx]["Employee"] for idx in selected_indices]
                 
             with right_pane:
                 st.subheader("✉️ Email Approval Workspace")
+                
+                # Create a clean string of all selected names for text
+                emp_names_str = ", ".join(active_emps)
                 
                 col_mgr, col_subj = st.columns([1, 2])
                 with col_mgr:
                     mgr = st.text_input("Manager Name", value="[Manager Name]")
                 with col_subj:
-                    subject_line = st.text_input("Subject Line", value=f"Action Required: Overtime Approval for {active_emp} ({client})")
+                    subject_line = st.text_input("Subject Line", value=f"Action Required: Overtime Approval for {emp_names_str} ({client})")
                 
                 table_rows_html = ""
-                for entry in active_data["Breakdown"]:
-                    table_rows_html += f"""
-                    <tr>
-                        <td style="border: 1px solid #dddddd; padding: 8px;">{active_emp}</td>
-                        <td style="border: 1px solid #dddddd; padding: 8px;">{entry['Date']}</td>
-                        <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{entry['Hours']}</td>
-                    </tr>
-                    """
+                total_decimal_hours = 0.0
+                
+                # Loop through every selected employee and build the combined rows
+                for emp in active_emps:
+                    active_data = overtime_records[emp]
+                    total_decimal_hours += active_data["Total_Hours"]
+                    
+                    for entry in active_data["Breakdown"]:
+                        table_rows_html += f"""
+                        <tr>
+                            <td style="border: 1px solid #dddddd; padding: 8px;">{emp}</td>
+                            <td style="border: 1px solid #dddddd; padding: 8px;">{entry['Date']}</td>
+                            <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{entry['Hours']}</td>
+                        </tr>
+                        """
+                
+                # Convert the grand total decimal hours back into HH:MM format
+                total_h = int(total_decimal_hours)
+                total_m = int(round((total_decimal_hours - total_h) * 60))
+                if total_m == 60:
+                    total_h += 1
+                    total_m = 0
+                formatted_total_hours = f"{total_h:02d}:{total_m:02d}"
+                
+                # Add the Total row at the bottom of the table
+                table_rows_html += f"""
+                <tr style="background-color: #e8e8e8; font-weight: bold;">
+                    <td colspan="2" style="border: 1px solid #dddddd; padding: 8px; text-align: right;">Grand Total:</td>
+                    <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{formatted_total_hours}</td>
+                </tr>
+                """
                 
                 email_html = f"""
                 <div style="font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #333333;">
                     <p>Hi {mgr},</p>
-                    <p>Please review and approve the client-site overtime for {active_emp}.</p>
+                    <p>Please review and approve the client-site overtime for the following team members: <strong>{emp_names_str}</strong>.</p>
                     
                     <table style="border-collapse: collapse; width: 100%; max-width: 500px; margin-top: 15px; margin-bottom: 15px;">
                         <thead>
