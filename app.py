@@ -22,7 +22,7 @@ if uploaded_zip is not None:
         with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
             for file_path in zip_ref.namelist():
                 
-                # 1. Process all Excel files, but completely skip system files and Individual Registrations
+                # Process all Excel files, skipping system files and Individual Registrations
                 if file_path.endswith('.xlsx') and '__MACOSX' not in file_path and 'Individual Registration' not in file_path:
                     
                     # Determine default employee name from folder path if needed
@@ -33,10 +33,9 @@ if uploaded_zip is not None:
                     with zip_ref.open(file_path) as file:
                         df = pd.read_excel(file, engine='calamine')
                         
-                        # Clean column whitespace
                         df.columns = df.columns.str.strip()
                         
-                        # 2. Dynamically identify Date and Hours columns
+                        # Dynamically identify Date and Hours columns
                         date_col = next((col for col in df.columns if 'Date' in col), None)
                         hours_col = 'Hours' if 'Hours' in df.columns else None
                         
@@ -62,16 +61,23 @@ if uploaded_zip is not None:
                             if not weekend_work.empty:
                                 for _, row in weekend_work.iterrows():
                                     
-                                    # 3. Dynamic Name Check: From row column if present, else from folder name
+                                    # Dynamic Name Check: From row column if present, else from folder name
                                     if 'Name' in df.columns:
                                         emp_name = str(row['Name']).strip()
                                     else:
                                         emp_name = folder_emp_name
                                         
                                     date_str = row[date_col].strftime('%d/%b/%Y')
-                                    hrs_str = str(row[hours_col]).strip()
-                                    decimal_hrs = row['Decimal_Hours']
+                                    raw_decimal_hrs = row['Decimal_Hours']
                                     
+                                    # --- CAP OVERTIME LOGIC (Max 8 hours per day) ---
+                                    if raw_decimal_hrs > 8.0:
+                                        decimal_hrs = 8.0
+                                        hrs_str = "08:00"  # Force display format to 8 hours
+                                    else:
+                                        decimal_hrs = raw_decimal_hrs
+                                        hrs_str = str(row[hours_col]).strip()
+                                        
                                     if emp_name not in overtime_records:
                                         overtime_records[emp_name] = {
                                             "Total_Hours": 0.0,
@@ -128,7 +134,7 @@ if uploaded_zip is not None:
                 
                 table_rows_html = ""
                 
-                # Loop through selected employees and build individual subtotals
+                # Loop through selected employees and build individual capped subtotals
                 for emp in active_emps:
                     if emp in overtime_records:
                         active_data = overtime_records[emp]
