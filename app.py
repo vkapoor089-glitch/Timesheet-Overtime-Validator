@@ -92,7 +92,6 @@ if uploaded_zip is not None:
                 st.subheader("📋 Overtime Summary")
                 st.write("Select one or more employees below to generate a consolidated draft:")
                 
-                # CHANGED to multi-row selection
                 selected_rows = st.dataframe(
                     df_results, 
                     use_container_width=True,
@@ -101,18 +100,15 @@ if uploaded_zip is not None:
                     selection_mode="multi-row" 
                 )
                 
-                # Default to the first row if nothing is checked
                 selected_indices = [0]
                 if selected_rows and selected_rows.get("selection", {}).get("rows"):
                     selected_indices = selected_rows["selection"]["rows"]
                 
-                # Gather all selected employees
                 active_emps = [summary_data[idx]["Employee"] for idx in selected_indices]
                 
             with right_pane:
                 st.subheader("✉️ Email Approval Workspace")
                 
-                # Create a clean string of all selected names for text
                 emp_names_str = ", ".join(active_emps)
                 
                 col_mgr, col_subj = st.columns([1, 2])
@@ -122,13 +118,13 @@ if uploaded_zip is not None:
                     subject_line = st.text_input("Subject Line", value=f"Action Required: Overtime Approval for {emp_names_str} ({client})")
                 
                 table_rows_html = ""
-                total_decimal_hours = 0.0
                 
-                # Loop through every selected employee and build the combined rows
+                # Loop through every selected employee and build rows + individual subtotals
                 for emp in active_emps:
                     active_data = overtime_records[emp]
-                    total_decimal_hours += active_data["Total_Hours"]
+                    emp_decimal_hours = active_data["Total_Hours"]
                     
+                    # 1. Add their specific daily rows
                     for entry in active_data["Breakdown"]:
                         table_rows_html += f"""
                         <tr>
@@ -137,22 +133,22 @@ if uploaded_zip is not None:
                             <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{entry['Hours']}</td>
                         </tr>
                         """
-                
-                # Convert the grand total decimal hours back into HH:MM format
-                total_h = int(total_decimal_hours)
-                total_m = int(round((total_decimal_hours - total_h) * 60))
-                if total_m == 60:
-                    total_h += 1
-                    total_m = 0
-                formatted_total_hours = f"{total_h:02d}:{total_m:02d}"
-                
-                # Add the Total row at the bottom of the table
-                table_rows_html += f"""
-                <tr style="background-color: #e8e8e8; font-weight: bold;">
-                    <td colspan="2" style="border: 1px solid #dddddd; padding: 8px; text-align: right;">Grand Total:</td>
-                    <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{formatted_total_hours}</td>
-                </tr>
-                """
+                    
+                    # 2. Convert THIS employee's total back to HH:MM format
+                    emp_h = int(emp_decimal_hours)
+                    emp_m = int(round((emp_decimal_hours - emp_h) * 60))
+                    if emp_m == 60:
+                        emp_h += 1
+                        emp_m = 0
+                    formatted_emp_total = f"{emp_h:02d}:{emp_m:02d}"
+                    
+                    # 3. Add the subtotal row for this employee
+                    table_rows_html += f"""
+                    <tr style="background-color: #f9f9f9; font-weight: bold;">
+                        <td colspan="2" style="border: 1px solid #dddddd; padding: 8px; text-align: right;">Total for {emp}:</td>
+                        <td style="border: 1px solid #dddddd; padding: 8px; text-align: center;">{formatted_emp_total}</td>
+                    </tr>
+                    """
                 
                 email_html = f"""
                 <div style="font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #333333;">
