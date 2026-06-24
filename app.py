@@ -17,28 +17,40 @@ st.divider()
 
 if uploaded_zip is not None:
     overtime_records = {}
+    skipped_files = []
 
     try:
         with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
             for file_path in zip_ref.namelist():
                 
-                # 1. Target Excel sheets only (Automatically ignores .msg and system files)
+                # Target Excel sheets only (Automatically ignores .msg and system files)
                 if file_path.endswith('.xlsx') and '__MACOSX' not in file_path and 'Individual Registration' not in file_path:
                     
-                    # Dynamically extract the immediate parent folder name for the employee
                     path_parts = file_path.split('/')
                     folder_emp_name = path_parts[-2] if len(path_parts) >= 2 else "Unknown Employee"
+                    filename = path_parts[-1]
 
-                    # Open and parse the Excel file
-                    with zip_ref.open(file_path) as file:
-                        df = pd.read_excel(file, engine='calamine')
-                        
+                    # --- SAFEGUARD: Isolated File Reading with Fallbacks ---
+                    df = None
+                    try:
+                        with zip_ref.open(file_path) as file:
+                            df = pd.read_excel(file, engine='calamine')
+                    except Exception:
+                        try:
+                            # Fallback to default engine if calamine fails to detect format
+                            with zip_ref.open(file_path) as file:
+                                df = pd.read_excel(file)
+                        except Exception as e:
+                            # Record the issue without crashing the whole application loop
+                            skipped_files.append({"employee": folder_emp_name, "file": filename, "error": str(e)})
+                            continue
+
+                    if df is not None:
                         df.columns = df.columns.str.strip()
                         
-                        # 2. Flexible Column Matching
-                        date_col = next((col for col in df.columns if 'Date' in col), None)
+                        # Flexible Column Matching (Handles 'Date' or truncated 'Attendanc' headers)
+                        date_col = next((col for col in df.columns if 'Date' in col or 'Attendanc' in col), None)
                         
-                        # Prioritize exact match for 'Hours', then look for variations like 'Working Hours'
                         if 'Hours' in df.columns:
                             hours_col = 'Hours'
                         else:
@@ -66,7 +78,6 @@ if uploaded_zip is not None:
                             if not weekend_work.empty:
                                 for _, row in weekend_work.iterrows():
                                     
-                                    # 3. Handle internal Name column vs nested Folder Name structure
                                     if 'Name' in df.columns:
                                         emp_name = str(row['Name']).strip()
                                     else:
@@ -94,6 +105,12 @@ if uploaded_zip is not None:
                                         "Date": date_str,
                                         "Hours": hrs_str
                                     })
+
+        # --- Display Skipped Files Warning Badges ---
+        if skipped_files:
+            with st.expander("⚠️ System Notification: Skipped Unreadable Files"):
+                for skip in skipped_files:
+                    st.warning(f"Skipped spreadsheet for **{skip['employee']}** (`{skip['file']}`). Reason: {skip['error']}")
 
         # --- Render Layout Dashboard ---
         if overtime_records:
@@ -197,7 +214,7 @@ if uploaded_zip is not None:
                 st.info("💡 Highlight the text and table in the preview above, copy (`Ctrl+C`), and paste it directly into your email client.")
                 
         else:
-            st.warning("No weekend overtime (greater than 00:00) found in the uploaded timesheets.")
+            st.warning("No weekend overtime (greater than 00:00) found in the successfully parsed timesheets.")
             
     except Exception as e:
-        st.error(f"An error occurred while processing the ZIP file: {e}")
+        st.error(f"An error occurred while processing the ZIP file structure: {e}")
