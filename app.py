@@ -22,22 +22,27 @@ if uploaded_zip is not None:
         with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
             for file_path in zip_ref.namelist():
                 
-                # Process all Excel files, skipping system files and Individual Registrations
+                # 1. Target Excel sheets only (Automatically ignores .msg and system files)
                 if file_path.endswith('.xlsx') and '__MACOSX' not in file_path and 'Individual Registration' not in file_path:
                     
-                    # Determine default employee name from folder path if needed
+                    # Dynamically extract the immediate parent folder name for the employee
                     path_parts = file_path.split('/')
                     folder_emp_name = path_parts[-2] if len(path_parts) >= 2 else "Unknown Employee"
 
-                    # Open and parse the Excel file using the calamine engine
+                    # Open and parse the Excel file
                     with zip_ref.open(file_path) as file:
                         df = pd.read_excel(file, engine='calamine')
                         
                         df.columns = df.columns.str.strip()
                         
-                        # Dynamically identify Date and Hours columns
+                        # 2. Flexible Column Matching
                         date_col = next((col for col in df.columns if 'Date' in col), None)
-                        hours_col = 'Hours' if 'Hours' in df.columns else None
+                        
+                        # Prioritize exact match for 'Hours', then look for variations like 'Working Hours'
+                        if 'Hours' in df.columns:
+                            hours_col = 'Hours'
+                        else:
+                            hours_col = next((col for col in df.columns if 'Hours' in col), None)
                         
                         if date_col and hours_col:
                             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
@@ -61,7 +66,7 @@ if uploaded_zip is not None:
                             if not weekend_work.empty:
                                 for _, row in weekend_work.iterrows():
                                     
-                                    # Dynamic Name Check: From row column if present, else from folder name
+                                    # 3. Handle internal Name column vs nested Folder Name structure
                                     if 'Name' in df.columns:
                                         emp_name = str(row['Name']).strip()
                                     else:
@@ -70,10 +75,10 @@ if uploaded_zip is not None:
                                     date_str = row[date_col].strftime('%d/%b/%Y')
                                     raw_decimal_hrs = row['Decimal_Hours']
                                     
-                                    # --- CAP OVERTIME LOGIC (Max 8 hours per day) ---
+                                    # --- 8-Hour Daily Overtime Cap ---
                                     if raw_decimal_hrs > 8.0:
                                         decimal_hrs = 8.0
-                                        hrs_str = "08:00"  # Force display format to 8 hours
+                                        hrs_str = "08:00"
                                     else:
                                         decimal_hrs = raw_decimal_hrs
                                         hrs_str = str(row[hours_col]).strip()
@@ -90,7 +95,7 @@ if uploaded_zip is not None:
                                         "Hours": hrs_str
                                     })
 
-        # --- Render the Workspace Dashboard ---
+        # --- Render Layout Dashboard ---
         if overtime_records:
             summary_data = []
             for emp, details in overtime_records.items():
@@ -134,7 +139,6 @@ if uploaded_zip is not None:
                 
                 table_rows_html = ""
                 
-                # Loop through selected employees and build individual capped subtotals
                 for emp in active_emps:
                     if emp in overtime_records:
                         active_data = overtime_records[emp]
